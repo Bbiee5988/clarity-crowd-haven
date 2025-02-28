@@ -15,7 +15,8 @@
   name: (string-ascii 64),
   min-contribution: uint,
   coverage-amount: uint,
-  created-by: principal
+  created-by: principal,
+  is-active: bool
 })
 
 ;; Create new insurance pool
@@ -35,7 +36,8 @@
       name: name,
       min-contribution: min-contribution, 
       coverage-amount: coverage-amount,
-      created-by: tx-sender
+      created-by: tx-sender,
+      is-active: true
     })
     (var-set next-pool-id (+ pool-id u1))
     (ok pool-id)))
@@ -43,3 +45,7 @@
 ;; Get pool details
 (define-read-only (get-pool (pool-id uint))
   (ok (map-get? pools pool-id)))
+
+;; Get active pools
+(define-read-only (get-active-pools)
+  (filter is-active (map-to-list pools)))
