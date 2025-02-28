@@ -7,6 +7,9 @@
 (define-constant err-low-contribution (err u102))
 (define-constant err-no-claim (err u103))
 (define-constant err-already-voted (err u104))
+(define-constant err-insufficient-votes (err u105))
+(define-constant err-claim-expired (err u106))
+(define-constant err-insufficient-funds (err u107))
 
 ;; Data vars
 (define-data-var initialized bool false)
@@ -16,6 +19,8 @@
 (define-data-var pool-admin principal tx-sender)
 (define-data-var total-funds uint u0)
 (define-data-var next-claim-id uint u0)
+(define-data-var vote-threshold uint u3)
+(define-data-var is-active bool true)
 
 ;; Data maps
 (define-map contributors principal uint)
@@ -26,7 +31,9 @@
   approved-amount: uint,
   status: (string-ascii 20),
   votes-yes: uint,
-  votes-no: uint
+  votes-no: uint,
+  created-at: uint,
+  expires-at: uint
 })
 (define-map claim-votes (tuple (claim-id uint) (voter principal)) bool)
 
@@ -58,7 +65,8 @@
 
 ;; File claim
 (define-public (file-claim (amount uint) (description (string-ascii 256)))
-  (let ((claim-id (var-get next-claim-id)))
+  (let ((claim-id (var-get next-claim-id))
+        (block-height (unwrap! block-height u0)))
     (map-set claims claim-id {
       amount: amount,
       description: description,
@@ -66,7 +74,9 @@
       approved-amount: u0,
       status: "pending",
       votes-yes: u0,
-      votes-no: u0
+      votes-no: u0,
+      created-at: block-height,
+      expires-at: (+ block-height u144)
     })
     (var-set next-claim-id (+ claim-id u1))
     (ok claim-id)))
@@ -74,7 +84,9 @@
 ;; Vote on claim
 (define-public (vote-on-claim (claim-id uint) (approve bool))
   (let ((claim (unwrap! (map-get? claims claim-id) err-no-claim))
-        (vote-key {claim-id: claim-id, voter: tx-sender}))
+        (vote-key {claim-id: claim-id, voter: tx-sender})
+        (block-height (unwrap! block-height u0)))
+    (asserts! (<= block-height (get expires-at claim)) err-claim-expired)
     (if (map-get? claim-votes vote-key)
       err-already-voted
       (begin
@@ -83,3 +95,27 @@
           (map-set claims claim-id (merge claim {votes-yes: (+ (get votes-yes claim) u1)}))
           (map-set claims claim-id (merge claim {votes-no: (+ (get votes-no claim) u1)})))
         (ok true)))))
+
+;; Execute claim payout
+(define-public (execute-claim (claim-id uint))
+  (let ((claim (unwrap! (map-get? claims claim-id) err-no-claim))
+        (total-votes (+ (get votes-yes claim) (get votes-no claim))))
+    (asserts! (>= total-votes (var-get vote-threshold)) err-insufficient-votes)
+    (asserts! (> (get votes-yes claim) (get votes-no claim)) err-insufficient-votes)
+    (asserts! (>= (var-get total-funds) (get amount claim)) err-insufficient-funds)
+    (begin
+      (var-set total-funds (- (var-get total-funds) (get amount claim)))
+      (map-set claims claim-id (merge claim {
+        status: "approved",
+        approved-amount: (get amount claim)
+      }))
+      (ok true))))
+
+;; Withdraw funds
+(define-public (withdraw (amount uint))
+  (let ((current-contribution (default-to u0 (map-get? contributors tx-sender))))
+    (asserts! (>= current-contribution amount) err-insufficient-funds)
+    (begin
+      (map-set contributors tx-sender (- current-contribution amount))
+      (var-set total-funds (- (var-get total-funds) amount))
+      (ok true))))
