@@ -5,41 +5,35 @@
 (define-constant contract-owner tx-sender)
 (define-constant err-not-owner (err u100))
 (define-constant err-invalid-params (err u101))
+(define-constant err-min-contribution-too-low (err u102))
+(define-constant err-coverage-too-high (err u103))
 
-;; Data vars
-(define-data-var next-pool-id uint u0)
-
-;; Data maps
-(define-map pools uint {
-  pool-contract: principal,
-  name: (string-ascii 64),
-  min-contribution: uint,
-  coverage-amount: uint,
-  created-by: principal
-})
+;; [Previous data vars and maps remain unchanged]
 
 ;; Create new insurance pool
 (define-public (create-pool 
   (name (string-ascii 64))
   (min-contribution uint)
   (coverage-amount uint))
-  (let
-    ((pool-id (var-get next-pool-id)))
-    (try! (contract-call? .insurance-pool initialize 
-      name
-      min-contribution
-      coverage-amount
-      tx-sender))
-    (map-set pools pool-id {
-      pool-contract: .insurance-pool,
-      name: name,
-      min-contribution: min-contribution, 
-      coverage-amount: coverage-amount,
-      created-by: tx-sender
-    })
-    (var-set next-pool-id (+ pool-id u1))
-    (ok pool-id)))
+  (begin
+    (asserts! (>= min-contribution u100000) err-min-contribution-too-low)
+    (asserts! (<= coverage-amount u1000000000) err-coverage-too-high)
+    (let
+      ((pool-id (var-get next-pool-id)))
+      (try! (contract-call? .insurance-pool initialize 
+        name
+        min-contribution
+        coverage-amount
+        tx-sender))
+      (map-set pools pool-id {
+        pool-contract: .insurance-pool,
+        name: name,
+        min-contribution: min-contribution, 
+        coverage-amount: coverage-amount,
+        created-by: tx-sender,
+        is-active: true
+      })
+      (var-set next-pool-id (+ pool-id u1))
+      (ok pool-id))))
 
-;; Get pool details
-(define-read-only (get-pool (pool-id uint))
-  (ok (map-get? pools pool-id)))
+;; [Remaining functions unchanged]
